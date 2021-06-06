@@ -97,6 +97,15 @@ class NXTFile(File, PTBNode):
                                        globalID=globalID, localID=localID)
                 self.xml_idx[(speaker, localID)] = ptb_sent
                 self.attachChild(ptb_sent)
+            
+            # recover surface forms (edemattos 6/6/2021)
+            # phonwords_loc = os.path.join(nxt_root_dir, 'xml', 'phonwords',
+            #                              '%s.%s.phonwords.xml' % (file_id, speaker))
+            # phonwords_tree = etree.parse(open(phonwords_loc))
+            # for p_xml in phonwords_tree.getroot().getchildren():
+            #     orth = p_xml.get('orth')
+            # TODO: clean orth (non-trivial; is there a better way to get surface forms?)
+        
         self.sortChildren()
 
     def _addTurns(self, path, filename):

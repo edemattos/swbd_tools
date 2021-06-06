@@ -59,7 +59,7 @@ def prune_empty(sent):
                 raise
 
 
-def convert_to_conll(sents, name):
+def convert_to_conllu(sents, name):
     """Run the Stanford dependency converter over the mrg file, via the temp
     files /tmp/*.mrg and /tmp/*.dep"""
     mrg_strs = []
@@ -72,9 +72,9 @@ def convert_to_conll(sents, name):
     loc = '/tmp/%s.mrg' % name[:-4]
     out_loc = '/tmp/%s.dep' % name[:-4] 
     open(loc, 'w').write(mrg_str)
-    cmd = 'java -mx800m -cp "./*:" ' + \
-           'edu.stanford.nlp.trees.EnglishGrammaticalStructure ' + \
-              '-treeFile "{mrg_loc}" -basic -makeCopulaHead -conllx > {out_loc}'
+    cmd = 'java -cp "./*:" -Dfile.encoding=UTF-8 ' \
+          'edu.stanford.nlp.trees.ud.UniversalDependenciesConverter ' \
+          '-encoding UTF-8 -treeFile {mrg_loc} > {out_loc}'
     # Fabric just gives a nice context-manager for "cd" here
     with fabric.api.lcd('stanford_converter/'):
         # And a nice way to just run something --- I hate subprocess...
@@ -82,12 +82,12 @@ def convert_to_conll(sents, name):
     return Path(out_loc).open().read()
 
 
-def transfer_heads(orig_words, sent, heads, labels):
+def transfer_heads(orig_words, sent, heads, labels, upos, xpos):
     tokens = []
     wordID_to_new_idx = dict((w.wordID, i) for i, w in enumerate(sent.listWords()))
     new_idx_to_old_idx = dict((wordID_to_new_idx[token[0]], i) for i, token in
                               enumerate(orig_words) if token[0] in wordID_to_new_idx)
-    for i, (wordID, text, pos, dfl) in enumerate(orig_words):
+    for i, (wordID, text, pos, dfl, _, _) in enumerate(orig_words):
         if wordID in wordID_to_new_idx:
             head_in_new = heads[wordID_to_new_idx[wordID]]
             if head_in_new == 0:
@@ -99,57 +99,76 @@ def transfer_heads(orig_words, sent, heads, labels):
             head = i
             label = 'erased'
         assert head >= 0
-        tokens.append((text, pos, head, label, dfl))
+
+        if label != 'erased':  # recover UD v2 tags (upos) with original PTB (xpos)
+            upos_, xpos_ = upos.pop(0), xpos.pop(0)
+        else:
+            upos_, xpos_ = pos, pos
+        
+        tokens.append((text, upos_, xpos_, head, label, dfl))
     return tokens
 
 
 def do_section(ptb_files, out_dir, name):
     out_dir = Path(out_dir)
-    conll = out_dir.join('%s.conll' % name).open('w')
-    pos = out_dir.join('%s.pos' % name).open('w')
-    txt = out_dir.join('%s.txt' % name).open('w')
+    conllu = out_dir.joinpath('%s.conllu' % name).open('w')
+    pos = out_dir.joinpath('%s.pos' % name).open('w')
+    txt = out_dir.joinpath('%s.txt' % name).open('w')
 
     for file_ in ptb_files:
-        sents = []
-        orig_words = []
+        sents, orig_words, turns = [], [], []
         for sent in file_.children():
             speechify(sent)
-            orig_words.append([(w.wordID, w.text, w.label, get_dfl(w, sent))
-                              for w in sent.listWords()])
+            orig_words.append([(
+                w.wordID, w.text, w.label, get_dfl(w, sent), sent.speaker, sent.globalID
+            ) for w in sent.listWords()])
+            turns.append(sent.turnID)
             remove_repairs(sent)
             remove_fillers(sent)
             remove_prn(sent)
             prune_empty(sent)
             sents.append(sent)
-        conll_strs = convert_to_conll(sents, file_.filename)
+        conllu_strs = convert_to_conllu(sents, file_.filename)
         tok_id = 0
-        for i, conll_sent in enumerate(conll_strs.strip().split('\n\n')):
-            heads, labels = read_conll(conll_sent)
-            tokens = transfer_heads(orig_words[i], sents[i], heads, labels)
-            conll.write(format_sent(tokens))
-            pos.write(u' '.join('%s/%s' % (token[0], token[1]) for token in tokens))
-            txt.write(u' '.join(token[0] for token in tokens))
-            conll.write(u'\n\n')
-            pos.write(u'\n')
-            txt.write(u'\n')
+        for i, conllu_sent in enumerate(conllu_strs.strip().split('\n\n')):
+            heads, labels, upos, xpos = read_conllu(conllu_sent)
+            tokens = transfer_heads(orig_words[i], sents[i], heads, labels, upos, xpos)
+
+            if not orig_words[i]:
+                continue
+
+            # TODO: recover untokenized surface forms for CoNLL-U text (see _PTBFile.py)
+            raw_text = ' '.join([tok[0] for tok in tokens])
+            dialogue_id, sent_id = orig_words[i][0][5].split('~')
+            speaker_id = orig_words[i][0][4]
+            
+            conllu.write(u'# sent_id = %s_%s_%s\n' % (dialogue_id, speaker_id, sent_id))
+            conllu.write(u'# turn_id = %s\n' % turns[i])
+            conllu.write(u'# text = %s\n' % u''.join(raw_text))
+            conllu.write(u'%s\n\n' % format_sent(tokens))
+            pos.write(u'%s\n' % ' '.join('%s/%s' % (tok[0], tok[1]) for tok in tokens))
+            txt.write(u'%s\n' % raw_text)
 
 
-def read_conll(dep_txt):
+def read_conllu(dep_txt):
     """Get heads and labels"""
-    heads = []; labels = []
+    heads, labels, upos, xpos = [], [], [], []
     for line in dep_txt.split('\n'):
         if not line.strip():
             continue
         fields = line.split()
         heads.append(int(fields[6]))
         labels.append(fields[7])
-    return heads, labels
+        upos.append(fields[3])
+        xpos.append(fields[4])
+    return heads, labels, upos, xpos
 
 
 def format_sent(tokens):
     lines = []
-    for i, (text, pos, head, label, dfl) in enumerate(tokens):
-        fields = [i + 1, text, '-', pos, pos, dfl, head, label, '-', '-']
+    for i, (text, upos, xpos, head, label, dfl) in enumerate(tokens):
+        # change fields from CoNLL-X to CoNLL-U format (edemattos 6/2021)
+        fields = [i + 1, text, '_', upos, xpos, '_', head, label, '_', dfl]
         lines.append('\t'.join(str(f) for f in fields))
     return u'\n'.join(lines)
 
