@@ -125,9 +125,11 @@ def convert_pos(pos, label):
 
     # TODO: recover/infer morphological features
 
-    # convert PTB to UD
-    if pos not in ud_tags and pos in ptb_tags:
-        pos = ptb_tags[pos]
+    if pos not in ud_tags:  # convert PTB to UD
+        try:
+            pos = ptb_tags[pos]
+        except Exception as e:
+            raise KeyError('PTB to UD conversion undefined for: %s' % e)
     
     # make UD validation script happy
     if label == 'cop' and pos == 'VERB':
@@ -162,6 +164,11 @@ def enforce_single_root(tokens):
     # reassign reparandum head to root
     elif num_roots == 2:
         tokens[0] = token, upos, xpos, root_idx + 1, label, misc
+    
+    elif num_roots >= 3:
+        # never reached, but could in theory if NXT is ever extended
+        # this function would possibly need to be overhauled
+        raise Exception('Multiple roots.')
     
     return tokens
 
@@ -232,6 +239,8 @@ def format_sent(tokens):
 
 
 def main(nxt_loc, out_dir):
+    if not os.path.exists("stanford_converter/"):
+        os.makedirs("stanford_converter/")
     corpus = Treebank.PTB.NXTSwitchboard(path=nxt_loc)
     do_section(corpus.train_files(), out_dir, 'train')
     do_section(corpus.dev_files(), out_dir, 'dev')
