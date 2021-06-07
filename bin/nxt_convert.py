@@ -82,12 +82,12 @@ def convert_to_conllu(sents, name):
     return Path(out_loc).open().read()
 
 
-def transfer_heads(orig_words, sent, heads, labels, upos, xpos):
+def transfer_heads(orig_words, sent, heads, labels, pos):
     tokens = []
     wordID_to_new_idx = dict((w.wordID, i) for i, w in enumerate(sent.listWords()))
     new_idx_to_old_idx = dict((wordID_to_new_idx[token[0]], i) for i, token in
                               enumerate(orig_words) if token[0] in wordID_to_new_idx)
-    for i, (wordID, text, pos, dfl, _, _) in enumerate(orig_words):
+    for i, (wordID, text, xpos, dfl, _, _) in enumerate(orig_words):
         if wordID in wordID_to_new_idx:
             head_in_new = heads[wordID_to_new_idx[wordID]]
             if head_in_new == 0:
@@ -95,17 +95,74 @@ def transfer_heads(orig_words, sent, heads, labels, upos, xpos):
             else:
                 head = new_idx_to_old_idx[head_in_new - 1] + 1
             label = labels[wordID_to_new_idx[wordID]]
+            # recover UD v2 tags
+            upos, label = convert_pos(pos.pop(0), label)
         else:
             head = i
-            label = 'erased'
+            label = 'reparandum'
+            # infer UD v2 tag from PTB tag and dependency relation
+            upos, label = convert_pos(xpos, label)
         assert head >= 0
+        tokens.append((text, upos, xpos, head, label, dfl))
+    return enforce_single_root(tokens)
 
-        if label != 'erased':  # recover UD v2 tags (upos) with original PTB (xpos)
-            upos_, xpos_ = upos.pop(0), xpos.pop(0)
-        else:
-            upos_, xpos_ = pos, pos
-        
-        tokens.append((text, upos_, xpos_, head, label, dfl))
+
+def convert_pos(pos, label):
+
+    ud_tags = {'ADJ', 'ADP', 'ADV', 'AUX', 'CCONJ', 'DET', 'INTJ', 'NOUN', 'NUM', 
+               'PART', 'PRON', 'PROPN', 'PUNCT', 'SCONJ', 'SYM', 'VERB', 'X'}
+
+    ptb_tags = {  # https://universaldependencies.org/tagset-conversion/en-penn-uposf.html
+        'BES': 'AUX', 'CC': 'CCONJ', 'CD': 'NUM', 'DT': 'DET', 'EX': 'PRON', 
+        'IN': 'ADP', 'JJ': 'ADJ', 'JJR': 'ADJ', 'JJS': 'ADJ', 'LS': 'X',
+        'MD': 'VERB', 'NN': 'NOUN', 'NNP': 'PROPN', 'NNPS': 'PROPN', 'NNS': 'PROPN',
+        'PDT': 'DET', 'POS': 'PART', 'PRP': 'PRON', 'PRP$': 'DET', 'RB': 'ADV', 
+        'RBR': 'ADV', 'RBS': 'ADV', 'RP': 'ADP', 'TO': 'PART', 'UH': 'INTJ', 
+        'VB': 'VERB', 'VBD': 'VERB', 'VBG': 'VERB', 'VBN': 'VERB', 'VBP': 'VERB', 
+        'VBZ': 'VERB', 'WDT': 'DET', 'WP': 'PRON', 'WP$': 'DET', 'WRB': 'ADV',
+        'HVS': 'AUX', '!': 'PUNCT', 'GW': 'X', 'TO|IN': 'ADP', 'UH|IN': 'INTJ'
+    }  # last row (HVS, !, etc.) were unilateral decisions (edemattos 6/2021)
+
+    # TODO: recover/infer morphological features
+
+    # convert PTB to UD
+    if pos not in ud_tags and pos in ptb_tags:
+        pos = ptb_tags[pos]
+    
+    # make UD validation script happy
+    if label == 'cop' and pos == 'VERB':
+        pos = 'AUX'
+    elif pos == 'PUNCT':
+        label = 'punct'
+
+    return pos, label
+
+
+def enforce_single_root(tokens):
+    """Reassign head of reparandum that occurs at the beginning of an utterance"""
+
+    if not tokens:
+        return
+
+    num_roots, root_idx = 0, -1
+    
+    # find root(s)
+    for i, (token, upos, xpos, head, label, misc) in enumerate(tokens):
+        if head == 0:
+            num_roots += 1
+            if label != 'reparandum':
+                root_idx = i
+
+    token, upos, xpos, head, label, misc = tokens[0]
+    
+    # utterance must have root
+    if num_roots == 1 and label == 'reparandum':
+        tokens[0] = token, upos, xpos, head, 'root', misc
+
+    # reassign reparandum head to root
+    elif num_roots == 2:
+        tokens[0] = token, upos, xpos, root_idx + 1, label, misc
+    
     return tokens
 
 
@@ -132,7 +189,9 @@ def do_section(ptb_files, out_dir, name):
         tok_id = 0
         for i, conllu_sent in enumerate(conllu_strs.strip().split('\n\n')):
             heads, labels, upos, xpos = read_conllu(conllu_sent)
-            tokens = transfer_heads(orig_words[i], sents[i], heads, labels, upos, xpos)
+            tokens = transfer_heads(orig_words[i], sents[i], heads, labels, upos)
+
+            # TODO: fix syntax errors raised by UD validation script
 
             if not orig_words[i]:
                 continue
@@ -167,7 +226,6 @@ def read_conllu(dep_txt):
 def format_sent(tokens):
     lines = []
     for i, (text, upos, xpos, head, label, dfl) in enumerate(tokens):
-        # change fields from CoNLL-X to CoNLL-U format (edemattos 6/2021)
         fields = [i + 1, text, '_', upos, xpos, '_', head, label, '_', dfl]
         lines.append('\t'.join(str(f) for f in fields))
     return u'\n'.join(lines)
