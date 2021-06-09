@@ -95,19 +95,18 @@ def transfer_heads(orig_words, sent, heads, labels, pos):
             else:
                 head = new_idx_to_old_idx[head_in_new - 1] + 1
             label = labels[wordID_to_new_idx[wordID]]
-            # recover UD v2 tags
-            upos, label = convert_pos(pos.pop(0), label)
+            upos, label = validate_UDv2(pos.pop(0), label)
         else:
             head = i
             label = 'reparandum'
-            # infer UD v2 tag from PTB tag and dependency relation
-            upos, label = convert_pos(xpos, label)
+            upos, label = validate_UDv2(xpos, label)  # update reparanda
         assert head >= 0
         tokens.append((text, upos, xpos, head, label, dfl))
     return enforce_single_root(tokens)
 
 
-def convert_pos(pos, label):
+def validate_UDv2(pos, label):
+    """Infer UD v2 tag from PTB tag and dependency relation."""
 
     ud_tags = {'ADJ', 'ADP', 'ADV', 'AUX', 'CCONJ', 'DET', 'INTJ', 'NOUN', 'NUM', 
                'PART', 'PRON', 'PROPN', 'PUNCT', 'SCONJ', 'SYM', 'VERB', 'X'}
@@ -136,6 +135,16 @@ def convert_pos(pos, label):
         pos = 'AUX'
     elif pos == 'PUNCT':
         label = 'punct'
+    # TODO: verify, loosely modelled after UD_English_EWT
+    elif label.split(':')[0] == 'cc' and pos == 'DET':
+        pos = 'CCONJ'
+    elif label == 'det' and pos == 'ADV':
+        pos = 'DET'
+    elif label == 'mark' and pos == 'DET':
+        pos = 'SCONJ'
+    elif label == 'nummod' and pos == 'DET':
+        label = 'det'
+    # TODO: fix other syntax errors raised by validation script
 
     return pos, label
 
@@ -158,7 +167,7 @@ def enforce_single_root(tokens):
     token, upos, xpos, head, label, misc = tokens[0]
     
     # utterance must have root
-    if num_roots == 1 and label == 'reparandum':
+    if num_roots == 1 and head == 0 and label == 'reparandum':
         tokens[0] = token, upos, xpos, head, 'root', misc
 
     # reassign reparandum head to root
@@ -192,13 +201,11 @@ def do_section(ptb_files, out_dir, name):
             remove_prn(sent)
             prune_empty(sent)
             sents.append(sent)
-        conllu_strs = convert_to_conllu(sents, file_.filename)
+        conllu_strs = convert_to_conllu(sents, file_.filename)  # ignores reparanda
         tok_id = 0
         for i, conllu_sent in enumerate(conllu_strs.strip().split('\n\n')):
             heads, labels, upos, xpos = read_conllu(conllu_sent)
             tokens = transfer_heads(orig_words[i], sents[i], heads, labels, upos)
-
-            # TODO: fix syntax errors raised by UD validation script
 
             if not orig_words[i]:
                 continue
@@ -233,6 +240,7 @@ def read_conllu(dep_txt):
 def format_sent(tokens):
     lines = []
     for i, (text, upos, xpos, head, label, dfl) in enumerate(tokens):
+        # change fields from CoNLL-X to CoNLL-U format (edemattos 6/2021)
         fields = [i + 1, text, '_', upos, xpos, '_', head, label, '_', dfl]
         lines.append('\t'.join(str(f) for f in fields))
     return u'\n'.join(lines)
