@@ -1,0 +1,12 @@
+.DS_Store
+.idea/
+Treebank/*.pyc
+Treebank/Nodes/*.pyc
+Treebank/PTB/*.pyc
+stanford-corenlp-4.2.2
+nxt
+nxt-ud
+nxt-ud-turn
+tools
+udapi-python
+UD_English-EWT

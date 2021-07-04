@@ -184,9 +184,9 @@ def enforce_single_root(tokens):
 
 def do_section(ptb_files, out_dir, name):
     out_dir = Path(out_dir)
-    conllu = out_dir.joinpath('%s.conllu' % name).open('w')
-    pos = out_dir.joinpath('%s.pos' % name).open('w')
-    txt = out_dir.joinpath('%s.txt' % name).open('w')
+    conllu = out_dir.joinpath('en_%s.conllu' % name).open('w')
+    pos = out_dir.joinpath('en_%s.pos' % name).open('w')
+    txt = out_dir.joinpath('en_%s.txt' % name).open('w')
 
     for file_ in ptb_files:
         sents, orig_words, turns = [], [], []
