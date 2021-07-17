@@ -19,9 +19,9 @@ def speechify(sent):
     for word in sent.listWords():
         if word.parent() is None or word.parent().parent() is None:
             continue
-        if word.text == '?':
+        if word.text == '?' or word.text == '!':
             word.prune()
-        if word.isPunct() or word.isTrace() or word.isPartial():
+        if word.isPunct() or word.isTrace(): # or word.isPartial():
             word.prune()
         word.text = word.text.lower()
 
@@ -36,7 +36,6 @@ def remove_fillers(sent):
     for word in sent.listWords():
         if word.label == 'UH':
             word.prune()
-
 
 
 def remove_prn(sent):
@@ -87,7 +86,7 @@ def transfer_heads(orig_words, sent, heads, labels, pos):
     wordID_to_new_idx = dict((w.wordID, i) for i, w in enumerate(sent.listWords()))
     new_idx_to_old_idx = dict((wordID_to_new_idx[token[0]], i) for i, token in
                               enumerate(orig_words) if token[0] in wordID_to_new_idx)
-    for i, (wordID, text, xpos, dfl, _, _) in enumerate(orig_words):
+    for i, (wordID, text, xpos, dfl, _, _, _) in enumerate(orig_words):
         if wordID in wordID_to_new_idx:
             head_in_new = heads[wordID_to_new_idx[wordID]]
             if head_in_new == 0:
@@ -99,7 +98,7 @@ def transfer_heads(orig_words, sent, heads, labels, pos):
         else:
             head = i
             label = 'reparandum'
-            upos, label = validate_UDv2(xpos, label)  # update reparanda
+            upos, label = validate_UDv2(xpos, label)
         assert head >= 0
         tokens.append((text, upos, xpos, head, label, dfl))
     return enforce_single_root(tokens)
@@ -119,32 +118,16 @@ def validate_UDv2(pos, label):
         'RBR': 'ADV', 'RBS': 'ADV', 'RP': 'ADP', 'TO': 'PART', 'UH': 'INTJ', 
         'VB': 'VERB', 'VBD': 'VERB', 'VBG': 'VERB', 'VBN': 'VERB', 'VBP': 'VERB', 
         'VBZ': 'VERB', 'WDT': 'DET', 'WP': 'PRON', 'WP$': 'DET', 'WRB': 'ADV',
-        'HVS': 'AUX', '!': 'PUNCT', 'GW': 'X', 'TO|IN': 'ADP', 'UH|IN': 'INTJ'
+        'HVS': 'AUX', '!': 'PUNCT', 'GW': 'X', 'TO|IN': 'ADP', 'UH|IN': 'INTJ', 'XX': 'X'
     }  # last row (HVS, !, etc.) were unilateral decisions (edemattos 6/2021)
 
-    # TODO: recover/infer morphological features
-
-    if pos not in ud_tags:  # convert PTB to UD
+    if pos not in ud_tags:  # convert PTB to UD if necessary
         try:
             pos = ptb_tags[pos]
         except Exception as e:
             raise KeyError('PTB to UD conversion undefined for: %s' % e)
     
-    # make UD validation script happy
-    if label == 'cop' and pos == 'VERB':
-        pos = 'AUX'
-    elif pos == 'PUNCT':
-        label = 'punct'
-    # TODO: verify, loosely modelled after UD_English_EWT
-    elif label.split(':')[0] == 'cc' and pos == 'DET':
-        pos = 'CCONJ'
-    elif label == 'det' and pos == 'ADV':
-        pos = 'DET'
-    elif label == 'mark' and pos == 'DET':
-        pos = 'SCONJ'
-    elif label == 'nummod' and pos == 'DET':
-        label = 'det'
-    # TODO: fix other syntax errors raised by validation script
+    # TODO: fix UD validation errors, recover morphological features if possible
 
     return pos, label
 
@@ -182,26 +165,26 @@ def enforce_single_root(tokens):
     return tokens
 
 
-def do_section(ptb_files, out_dir, name):
+def do_section(ptb_files, out_dir, name, turn):
     out_dir = Path(out_dir)
-    conllu = out_dir.joinpath('en_%s.conllu' % name).open('w')
-    pos = out_dir.joinpath('en_%s.pos' % name).open('w')
-    txt = out_dir.joinpath('en_%s.txt' % name).open('w')
+    conllu = out_dir.joinpath('en_nxt-%s.conllu' % name).open('w')
+    # pos = out_dir.joinpath('en_nxt-%s.pos' % name).open('w')
+    # txt = out_dir.joinpath('en_nxt-%s.txt' % name).open('w')
 
     for file_ in ptb_files:
-        sents, orig_words, turns = [], [], []
+        sents, orig_words = [], []
         for sent in file_.children():
             speechify(sent)
             orig_words.append([(
-                w.wordID, w.text, w.label, get_dfl(w, sent), sent.speaker, sent.globalID
+                w.wordID, w.text, w.label, get_dfl(w, sent), 
+                sent.speaker, sent.globalID, sent.turnID
             ) for w in sent.listWords()])
-            turns.append(sent.turnID)
-            remove_repairs(sent)
-            remove_fillers(sent)
-            remove_prn(sent)
-            prune_empty(sent)
+            # remove_repairs(sent)  # keep speech disfluencies!
+            # remove_fillers(sent)
+            # remove_prn(sent)
+            # prune_empty(sent)
             sents.append(sent)
-        conllu_strs = convert_to_conllu(sents, file_.filename)  # ignores reparanda
+        conllu_strs = convert_to_conllu(sents, file_.filename)
         tok_id = 0
         for i, conllu_sent in enumerate(conllu_strs.strip().split('\n\n')):
             heads, labels, upos, xpos = read_conllu(conllu_sent)
@@ -211,16 +194,25 @@ def do_section(ptb_files, out_dir, name):
                 continue
 
             # TODO: recover untokenized surface forms for CoNLL-U text (see _PTBFile.py)
-            raw_text = ' '.join([tok[0] for tok in tokens])
-            dialogue_id, sent_id = orig_words[i][0][5].split('~')
+            doc_id, sent_no = orig_words[i][0][5].split('~')
+            sent_id = '%s_%s' % (doc_id, sent_no)
+            turn_id = orig_words[i][0][6]
             speaker_id = orig_words[i][0][4]
+            raw_text = ' '.join(["%s+%s+%s" % (tok[0], sent_id, i + 1) 
+                                 for i, tok in enumerate(tokens)])
             
-            conllu.write(u'# sent_id = %s_%s_%s\n' % (dialogue_id, speaker_id, sent_id))
-            conllu.write(u'# turn_id = %s\n' % turns[i])
+            if turn:
+                # make sure files are empty before running (append mode is necessary)
+                conllu = out_dir.joinpath('%s/en_nxt_%s_%s.txt' % (name, name, doc_id)).open('a')
+            
+            conllu.write(u'# sent_id = %s_%s_%s\n' % (sent_id, turn_id, speaker_id))
+            # conllu.write(u'# turn_id = %s\n' % turn_id)
+            # conllu.write(u'# speaker = %s\n' % speaker_id)
+            # conllu.write(u'# addressee = %s\n' % ('B' if speaker_id == 'A' else 'A'))
             conllu.write(u'# text = %s\n' % u''.join(raw_text))
-            conllu.write(u'%s\n\n' % format_sent(tokens))
-            pos.write(u'%s\n' % ' '.join('%s/%s' % (tok[0], tok[1]) for tok in tokens))
-            txt.write(u'%s\n' % raw_text)
+            conllu.write(u'%s\n\n' % format_sent(tokens, sent_id))
+            # pos.write(u'%s\n' % ' '.join('%s/%s' % (tok[0], tok[1]) for tok in tokens))
+            # txt.write(u'%s\n' % raw_text)
 
 
 def read_conllu(dep_txt):
@@ -230,6 +222,13 @@ def read_conllu(dep_txt):
         if not line.strip():
             continue
         fields = line.split()
+        
+        # corrupted output from CoreNLP; just assign head as previous token
+        # https://github.com/stanfordnlp/CoreNLP/issues/832
+        if fields[6] == '_':
+            fields[6] = int(fields[0]) - 1
+            fields[7] = 'dep'
+        
         heads.append(int(fields[6]))
         labels.append(fields[7])
         upos.append(fields[3])
@@ -237,23 +236,25 @@ def read_conllu(dep_txt):
     return heads, labels, upos, xpos
 
 
-def format_sent(tokens):
+def format_sent(tokens, sent_id):
     lines = []
     for i, (text, upos, xpos, head, label, dfl) in enumerate(tokens):
+        idx = i + 1
+        text = '%s+%s+%s' % (text, sent_id, idx)
         # change fields from CoNLL-X to CoNLL-U format (edemattos 6/2021)
-        fields = [i + 1, text, '_', upos, xpos, '_', head, label, '_', dfl]
+        fields = [idx, text, '_', upos, xpos, '_', head, label, '_', dfl]
         lines.append('\t'.join(str(f) for f in fields))
     return u'\n'.join(lines)
 
 
-def main(nxt_loc, out_dir):
+def main(nxt_loc, out_dir, turn=None):
     if not os.path.exists("stanford_converter/"):
         os.makedirs("stanford_converter/")
     corpus = Treebank.PTB.NXTSwitchboard(path=nxt_loc)
-    do_section(corpus.train_files(), out_dir, 'train')
-    do_section(corpus.dev_files(), out_dir, 'dev')
-    do_section(corpus.dev2_files(), out_dir, 'dev2')
-    do_section(corpus.eval_files(), out_dir, 'test')
+    do_section(corpus.train_files(), out_dir, 'train', turn)
+    do_section(corpus.dev_files(), out_dir, 'dev', turn)
+    do_section(corpus.dev2_files(), out_dir, 'dev2', turn)
+    do_section(corpus.eval_files(), out_dir, 'test', turn)
 
 
 if __name__ == '__main__':
