@@ -200,9 +200,7 @@ def do_section(ptb_files, out_dir, name, turn):
             sent_id = '%s_%s' % (doc_id, sent_no)
             turn_id = orig_words[i][0][6]
             speaker_id = orig_words[i][0][4]
-            if turn:
-                sent_id = sent_id.split('_')[0]
-            raw_text = ' '.join(["%s+%s_%s+%s" % (tok[0], sent_id, turn_id, i + 1) 
+            raw_text = ' '.join(["%s+%s+%s" % (tok[0], sent_id, i + 1) 
                                  for i, tok in enumerate(tokens)])
             
             if turn:
@@ -214,10 +212,7 @@ def do_section(ptb_files, out_dir, name, turn):
             # conllu.write(u'# speaker = %s\n' % speaker_id)
             # conllu.write(u'# addressee = %s\n' % ('B' if speaker_id == 'A' else 'A'))
             conllu.write(u'# text = %s\n' % u''.join(raw_text))
-            if turn:
-                conllu.write(u'%s\n\n' % format_sent(tokens, sent_id, turn_id))
-            else:
-                conllu.write(u'%s\n\n' % format_sent(tokens, sent_id, None))
+            conllu.write(u'%s\n\n' % format_sent(tokens, sent_id))
             # pos.write(u'%s\n' % ' '.join('%s/%s' % (tok[0], tok[1]) for tok in tokens))
             # txt.write(u'%s\n' % raw_text)
 
@@ -243,15 +238,11 @@ def read_conllu(dep_txt):
     return heads, labels, upos, xpos
 
 
-def format_sent(tokens, sent_id, turn_id):
+def format_sent(tokens, sent_id):
     lines = []
     for i, (text, upos, xpos, head, label, dfl) in enumerate(tokens):
         idx = i + 1
-        if turn_id:
-            sent_id = sent_id.split('_')[0]
-            text = '%s+%s_%s+%s' % (text, sent_id, turn_id, idx)
-        else:
-            text = '%s+%s+%s' % (text, sent_id, idx)
+        text = '%s+%s+%s' % (text, sent_id, idx)
         # change fields from CoNLL-X to CoNLL-U format (edemattos 6/2021)
         fields = [idx, text, '_', upos, xpos, '_', head, label, '_', dfl]
         lines.append('\t'.join(str(f) for f in fields))
