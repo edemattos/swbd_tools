@@ -168,6 +168,8 @@ def enforce_single_root(tokens):
 def do_section(ptb_files, out_dir, name, turn):
     out_dir = Path(out_dir)
     conllu = out_dir.joinpath('en_nxt-%s.conllu' % name).open('w')
+    if turn and not Path(out_dir.joinpath(name)).exists():
+        Path(out_dir.joinpath(name)).mkdir()
     # pos = out_dir.joinpath('en_nxt-%s.pos' % name).open('w')
     # txt = out_dir.joinpath('en_nxt-%s.txt' % name).open('w')
 
@@ -198,7 +200,9 @@ def do_section(ptb_files, out_dir, name, turn):
             sent_id = '%s_%s' % (doc_id, sent_no)
             turn_id = orig_words[i][0][6]
             speaker_id = orig_words[i][0][4]
-            raw_text = ' '.join(["%s+%s+%s" % (tok[0], sent_id, i + 1) 
+            if turn:
+                sent_id = sent_id.split('_')[0]
+            raw_text = ' '.join(["%s+%s_%s+%s" % (tok[0], sent_id, turn_id, i + 1) 
                                  for i, tok in enumerate(tokens)])
             
             if turn:
@@ -210,7 +214,10 @@ def do_section(ptb_files, out_dir, name, turn):
             # conllu.write(u'# speaker = %s\n' % speaker_id)
             # conllu.write(u'# addressee = %s\n' % ('B' if speaker_id == 'A' else 'A'))
             conllu.write(u'# text = %s\n' % u''.join(raw_text))
-            conllu.write(u'%s\n\n' % format_sent(tokens, sent_id))
+            if turn:
+                conllu.write(u'%s\n\n' % format_sent(tokens, sent_id, turn_id))
+            else:
+                conllu.write(u'%s\n\n' % format_sent(tokens, sent_id, None))
             # pos.write(u'%s\n' % ' '.join('%s/%s' % (tok[0], tok[1]) for tok in tokens))
             # txt.write(u'%s\n' % raw_text)
 
@@ -236,11 +243,15 @@ def read_conllu(dep_txt):
     return heads, labels, upos, xpos
 
 
-def format_sent(tokens, sent_id):
+def format_sent(tokens, sent_id, turn_id):
     lines = []
     for i, (text, upos, xpos, head, label, dfl) in enumerate(tokens):
         idx = i + 1
-        text = '%s+%s+%s' % (text, sent_id, idx)
+        if turn_id:
+            sent_id = sent_id.split('_')[0]
+            text = '%s+%s_%s+%s' % (text, sent_id, turn_id, idx)
+        else:
+            text = '%s+%s+%s' % (text, sent_id, idx)
         # change fields from CoNLL-X to CoNLL-U format (edemattos 6/2021)
         fields = [idx, text, '_', upos, xpos, '_', head, label, '_', dfl]
         lines.append('\t'.join(str(f) for f in fields))
@@ -253,7 +264,7 @@ def main(nxt_loc, out_dir, turn=None):
     corpus = Treebank.PTB.NXTSwitchboard(path=nxt_loc)
     do_section(corpus.train_files(), out_dir, 'train', turn)
     do_section(corpus.dev_files(), out_dir, 'dev', turn)
-    do_section(corpus.dev2_files(), out_dir, 'dev2', turn)
+    # do_section(corpus.dev2_files(), out_dir, 'dev2', turn)  # not needed
     do_section(corpus.eval_files(), out_dir, 'test', turn)
 
 
