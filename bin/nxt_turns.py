@@ -6,7 +6,7 @@ import re
 # because turns and sentences within turns may be out of order
 
 split = sys.argv[1]
-turn_dir = '../UD_English-NXT-turn/'
+turn_dir = 'UD_English-NXTturnspeechfixed'
 files = Path(turn_dir).rglob('%s/*.txt' % split)
 
 
@@ -57,8 +57,8 @@ for filename in sorted(files):
                 except:
                     print(line.strip().split()[3].split('_'))
                     exit()
-                t_id = float(re.sub('-', '..', turn_id[1:]))
-                doc = '%s_%s_%s' % (doc_id, turn_id, speaker_id)
+                t_id = float(re.sub('-', '.', turn_id[1:]))
+                doc = '%s_%s' % (doc_id, turn_id)
             elif line.startswith('# text'):
                 text = line.strip().split()[3:]
                 for i, token in enumerate(text):
@@ -85,7 +85,7 @@ for filename in sorted(files):
 
     # append dialogue to final turn-based conllu file
     # make sure file is empty!
-    with open('%s/en_nxt-%s.conllu' % (str(turn_dir), split), 'a') as b:
+    with open('%s/en_nxt-ud-%s.conllu' % (str(turn_dir), split), 'a') as b:
         for turn in sorted(dialogue):
             b.write('# sent_id = %s\n' % str(dialogue[turn]['doc']))
             b.write('# text =')
